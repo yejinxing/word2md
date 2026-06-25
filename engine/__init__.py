@@ -30,7 +30,7 @@ def convert(
     output_mode: str = "html",
     extract_images: bool = True,
     images_dir: Optional[str | Path] = None,
-    skip_cover: bool = True,
+    skip_cover: bool = False,
     frontmatter: bool = True,
 ) -> dict:
     """一站式转换：Reader → Parser → Emitter。

@@ -23,6 +23,13 @@ class HtmlEmitter:
 
     def emit(self, ir: DocumentIR, frontmatter: bool = True) -> str:
         parts = []
+        parts.append(
+            "<style>\n"
+            "table { border-collapse: collapse; width: 100%; margin: 1em 0; }\n"
+            "td, th { border: 1px solid #333; padding: 6px 10px; text-align: left; }\n"
+            ".footnotes { font-size: 0.9em; color: #666; }\n"
+            "</style>"
+        )
         if frontmatter:
             fm = _build_frontmatter(ir)
             if fm:
