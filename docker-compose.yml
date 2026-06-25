@@ -1,0 +1,8 @@
+version: "3.8"
+
+services:
+  word2md:
+    build: .
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

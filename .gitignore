@@ -16,3 +16,12 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Project planning files
+task_plan.md
+findings.md
+progress.md
+
+# Tests
+tests/
+.pytest_cache/
