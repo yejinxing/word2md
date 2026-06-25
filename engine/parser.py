@@ -15,6 +15,8 @@ class SemanticParser:
         self.skip_cover = skip_cover
         self._footnotes_cache: dict | None = None
         self._found_first_heading = False
+        self._para_count = 0
+        self._cover_ended = not skip_cover  # 如果不跳过封面，直接认为封面结束
 
     def parse(self) -> DocumentIR:
         """完整解析文档，返回 DocumentIR。"""
@@ -66,7 +68,6 @@ class SemanticParser:
         is_heading = style.startswith("Heading") or outline_lvl > 0
         level = 1
         if is_heading:
-            self._found_first_heading = True
             if outline_lvl > 0:
                 level = outline_lvl
             elif style.startswith("Heading"):
@@ -76,9 +77,21 @@ class SemanticParser:
                     level = 1
             level = min(max(level, 1), 6)
 
-        # 封面页跳过：第一个标题之前的内容
-        if self.skip_cover and not self._found_first_heading:
-            return None
+        # 封面页跳过：最多跳过前 10 个段落，或遇到分页符时停止
+        if not self._cover_ended:
+            self._para_count += 1
+            # 检测分页符
+            rprs = p_elem.findall(f".//{DocxReader.qn('w:lastRenderedPageBreak')}")
+            has_break = len(rprs) > 0
+            pPr = p_elem.find(DocxReader.qn('w:pPr'))
+            if pPr is not None:
+                sect = pPr.find(DocxReader.qn('w:sectPr'))
+                if sect is not None:
+                    has_break = True
+            if has_break or self._para_count > 10 or is_heading:
+                self._cover_ended = True
+            else:
+                return None
 
         spans = self._extract_spans(p_elem)
         text = "".join(s.text for s in spans)
@@ -95,11 +108,16 @@ class SemanticParser:
         return IRNode(type="paragraph", children=spans)
 
     def _is_toc(self, p_elem: ET.Element) -> bool:
-        """检测段落是否为目录(TOC)内容。"""
+        """检测段落是否为目录(TOC)内容。仅当同时满足 TOC 样式 + PAGEREF/HYPERLINK 时才跳过。"""
         instr_texts = p_elem.findall(f".//{DocxReader.qn('w:instrText')}")
+        has_pageref = False
         for instr in instr_texts:
-            if instr.text and "TOC" in instr.text.upper():
-                return True
+            if instr.text and ("PAGEREF" in instr.text or "HYPERLINK" in instr.text):
+                has_pageref = True
+                break
+        if not has_pageref:
+            return False
+        # 同时检查 TOC 样式
         pPr = p_elem.find(DocxReader.qn("w:pPr"))
         if pPr is not None:
             pStyle = pPr.find(DocxReader.qn("w:pStyle"))
