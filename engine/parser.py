@@ -14,9 +14,9 @@ class SemanticParser:
         self.body = self.doc.find(DocxReader.qn("w:body"))
         self.skip_cover = skip_cover
         self._footnotes_cache: dict | None = None
-        self._found_first_heading = False
         self._para_count = 0
-        self._cover_ended = not skip_cover  # 如果不跳过封面，直接认为封面结束
+        self._cover_ended = not skip_cover
+        self._heading_styles: set = self._load_heading_styles()
 
     def parse(self) -> DocumentIR:
         """完整解析文档，返回 DocumentIR。"""
@@ -65,16 +65,13 @@ class SemanticParser:
             if outline is not None:
                 outline_lvl = int(outline.attrib.get(DocxReader.qn("w:val"), "0")) + 1
 
-        is_heading = style.startswith("Heading") or outline_lvl > 0
+        is_heading = style in self._heading_styles or outline_lvl > 0
         level = 1
         if is_heading:
             if outline_lvl > 0:
                 level = outline_lvl
-            elif style.startswith("Heading"):
-                try:
-                    level = int(style.replace("Heading", ""))
-                except ValueError:
-                    level = 1
+            elif style in self._heading_styles:
+                level = self._heading_styles[style]
             level = min(max(level, 1), 6)
 
         # 封面页跳过：最多跳过前 10 个段落，或遇到分页符时停止
@@ -106,6 +103,31 @@ class SemanticParser:
             return IRNode(type="heading", level=level, children=spans)
 
         return IRNode(type="paragraph", children=spans)
+
+    def _load_heading_styles(self) -> dict:
+        """从 styles.xml 加载标题样式 ID → 级别映射。"""
+        heading_map = {
+            "Heading1": 1, "Heading2": 2, "Heading3": 3,
+            "Heading4": 4, "Heading5": 5, "Heading6": 6,
+        }
+        try:
+            styles_root = self.reader.styles_xml
+            for style in styles_root.findall(f".//{DocxReader.qn('w:style')}"):
+                style_id = style.attrib.get(DocxReader.qn("w:styleId"), "")
+                pPr = style.find(DocxReader.qn("w:pPr"))
+                if pPr is not None:
+                    outline = pPr.find(DocxReader.qn("w:outlineLvl"))
+                    if outline is not None:
+                        lvl = int(outline.attrib.get(DocxReader.qn("w:val"), "0")) + 1
+                        heading_map[style_id] = min(max(lvl, 1), 6)
+                based = style.find(DocxReader.qn("w:basedOn"))
+                if based is not None:
+                    based_val = based.attrib.get(DocxReader.qn("w:val"), "")
+                    if based_val in heading_map:
+                        heading_map[style_id] = heading_map[based_val]
+        except Exception:
+            pass
+        return heading_map
 
     def _is_toc(self, p_elem: ET.Element) -> bool:
         """检测段落是否为目录(TOC)内容。仅当同时满足 TOC 样式 + PAGEREF/HYPERLINK 时才跳过。"""
