@@ -8,25 +8,31 @@ from xml.etree import ElementTree as ET
 class SemanticParser:
     """解析 .docx XML，输出 DocumentIR。"""
 
-    def __init__(self, reader: DocxReader):
+    def __init__(self, reader: DocxReader, skip_cover: bool = True):
         self.reader = reader
         self.doc = reader.document_xml
         self.body = self.doc.find(DocxReader.qn("w:body"))
+        self.skip_cover = skip_cover
+        self._footnotes_cache: dict | None = None
+        self._found_first_heading = False
 
     def parse(self) -> DocumentIR:
         """完整解析文档，返回 DocumentIR。"""
         ir = DocumentIR()
         ir.title = self._extract_title()
         ir.author = self._extract_author()
+        ir.date = self._extract_date()
 
         if self.body is None:
             return ir
+
+        # 预解析脚注
+        self._parse_footnotes(ir)
 
         for element in self.body:
             tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
 
             if tag == "p":
-                # 跳过 TOC 目录
                 if self._is_toc(element):
                     continue
                 node = self._parse_paragraph(element)
@@ -40,8 +46,7 @@ class SemanticParser:
         return ir
 
     def _parse_paragraph(self, p_elem: ET.Element) -> IRNode | None:
-        """解析单个段落元素，识别标题/段落/图片/页眉页脚。"""
-        # 检查是否包含图片
+        """解析单个段落元素，识别标题/段落/图片。"""
         image = self._detect_image(p_elem)
         if image:
             return image
@@ -58,10 +63,10 @@ class SemanticParser:
             if outline is not None:
                 outline_lvl = int(outline.attrib.get(DocxReader.qn("w:val"), "0")) + 1
 
-        # 判断标题
         is_heading = style.startswith("Heading") or outline_lvl > 0
         level = 1
         if is_heading:
+            self._found_first_heading = True
             if outline_lvl > 0:
                 level = outline_lvl
             elif style.startswith("Heading"):
@@ -71,14 +76,16 @@ class SemanticParser:
                     level = 1
             level = min(max(level, 1), 6)
 
-        # 提取 spans
+        # 封面页跳过：第一个标题之前的内容
+        if self.skip_cover and not self._found_first_heading:
+            return None
+
         spans = self._extract_spans(p_elem)
         text = "".join(s.text for s in spans)
 
         if not text.strip():
             return None
 
-        # 忽略页眉/页脚
         if "header" in style.lower() or "footer" in style.lower():
             return None
 
@@ -103,22 +110,49 @@ class SemanticParser:
         return False
 
     def _extract_spans(self, p_elem: ET.Element) -> list[Span]:
-        """提取段落中所有 run 的 inline 格式。"""
+        """提取段落中所有 run 的 inline 格式，含域代码和脚注引用。"""
         spans = []
+        in_field = False
+        field_text = ""
+
         for r_elem in p_elem.findall(DocxReader.qn("w:r")):
             rPr = r_elem.find(DocxReader.qn("w:rPr"))
             bold = italic = underline = False
             highlight = color = None
+            footnote_id = None
+
+            # 检测域代码
+            fld_char = r_elem.find(DocxReader.qn("w:fldChar"))
+            instr_text = r_elem.find(DocxReader.qn("w:instrText"))
+
+            if fld_char is not None:
+                fld_type = fld_char.attrib.get(DocxReader.qn("w:fldCharType"), "")
+                if fld_type == "begin":
+                    in_field = True
+                    field_text = ""
+                    continue
+                elif fld_type == "end":
+                    in_field = False
+                    field_text = ""
+                    continue
+            if instr_text is not None and instr_text.text:
+                field_text = instr_text.text
+                continue
+            if in_field:
+                continue  # 跳过域代码之间的内容
+
+            # 检测脚注引用
+            footnote_ref = r_elem.find(DocxReader.qn("w:footnoteReference"))
+            if footnote_ref is not None:
+                footnote_id = footnote_ref.attrib.get(DocxReader.qn("w:id"), "")
 
             if rPr is not None:
                 bold = rPr.find(DocxReader.qn("w:b")) is not None
                 italic = rPr.find(DocxReader.qn("w:i")) is not None
                 underline = rPr.find(DocxReader.qn("w:u")) is not None
-
                 hl = rPr.find(DocxReader.qn("w:highlight"))
                 if hl is not None:
                     highlight = hl.attrib.get(DocxReader.qn("w:val"), "yellow")
-
                 clr = rPr.find(DocxReader.qn("w:color"))
                 if clr is not None:
                     color = clr.attrib.get(DocxReader.qn("w:val"), None)
@@ -126,14 +160,16 @@ class SemanticParser:
             t_elem = r_elem.find(DocxReader.qn("w:t"))
             text = t_elem.text if t_elem is not None and t_elem.text else ""
 
-            spans.append(Span(
-                text=text,
-                bold=bold,
-                italic=italic,
-                underline=underline,
-                highlight=highlight,
-                color=color,
-            ))
+            if text or highlight or color or footnote_id:
+                spans.append(Span(
+                    text=text,
+                    bold=bold,
+                    italic=italic,
+                    underline=underline,
+                    highlight=highlight,
+                    color=color,
+                    footnote_id=footnote_id,
+                ))
         return spans
 
     def _parse_table(self, tbl_elem: ET.Element) -> IRNode | None:
@@ -148,13 +184,11 @@ class SemanticParser:
                     grid_span = tcPr.find(DocxReader.qn("w:gridSpan"))
                     if grid_span is not None:
                         colspan = int(grid_span.attrib.get(DocxReader.qn("w:val"), "1"))
-
                 paras = tc.findall(DocxReader.qn("w:p"))
                 cell_text = ""
                 for p in paras:
                     spans = self._extract_spans(p)
                     cell_text += "".join(s.text for s in spans) + "\n"
-
                 cells.append(TableCell(text=cell_text.strip(), colspan=colspan))
             rows.append(cells)
         return IRNode(type="table", children=rows)
@@ -164,7 +198,6 @@ class SemanticParser:
         drawing = p_elem.find(DocxReader.qn("w:r"))
         if drawing is None:
             return None
-        # 深层搜索 blip 元素
         blips = p_elem.findall(f".//{DocxReader.qn('a:blip')}")
         if not blips:
             return None
@@ -172,15 +205,35 @@ class SemanticParser:
         embed = blip.attrib.get(f"{{{DocxReader.NS['r']}}}embed", "")
         if not embed:
             return None
-        # 获取图片扩展名
         ext = self.reader.get_image_ext(embed)
         return IRNode(
             type="image",
             attrs={"rId": embed, "ext": ext, "filename": f"image_{embed}{ext}"},
         )
 
+    def _parse_footnotes(self, ir: DocumentIR):
+        """解析脚注/尾注。"""
+        try:
+            fns_xml = self.reader.zip.read("word/footnotes.xml")
+        except KeyError:
+            return
+        root = ET.fromstring(fns_xml)
+        ns = DocxReader.qn("w:footnote")
+        for fn in root.findall(ns):
+            fn_id = fn.attrib.get(DocxReader.qn("w:id"), "")
+            if fn_id in ("0", "-1"):
+                continue
+            text_parts = []
+            for p in fn.findall(DocxReader.qn("w:p")):
+                for t in p.findall(f".//{DocxReader.qn('w:t')}"):
+                    if t.text:
+                        text_parts.append(t.text)
+            ir.footnotes.append({
+                "id": fn_id,
+                "text": "".join(text_parts),
+            })
+
     def _extract_title(self) -> str:
-        """从 docProps/core.xml 提取标题。"""
         try:
             core = self.reader.zip.read("docProps/core.xml")
             root = ET.fromstring(core)
@@ -191,12 +244,22 @@ class SemanticParser:
             return ""
 
     def _extract_author(self) -> str:
-        """从 docProps/core.xml 提取作者。"""
         try:
             core = self.reader.zip.read("docProps/core.xml")
             root = ET.fromstring(core)
             ns = "{http://purl.org/dc/elements/1.1/}"
             creator = root.find(f"{ns}creator")
             return creator.text if creator is not None and creator.text else ""
+        except (KeyError, ET.ParseError):
+            return ""
+
+    def _extract_date(self) -> str:
+        """提取文档日期。"""
+        try:
+            core = self.reader.zip.read("docProps/core.xml")
+            root = ET.fromstring(core)
+            ns = "{http://purl.org/dc/terms/}"
+            d = root.find(f"{ns}created")
+            return d.text[:10] if d is not None and d.text else ""
         except (KeyError, ET.ParseError):
             return ""

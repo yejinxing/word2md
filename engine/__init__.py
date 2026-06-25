@@ -30,6 +30,8 @@ def convert(
     output_mode: str = "html",
     extract_images: bool = True,
     images_dir: Optional[str | Path] = None,
+    skip_cover: bool = True,
+    frontmatter: bool = True,
 ) -> dict:
     """一站式转换：Reader → Parser → Emitter。
 
@@ -43,7 +45,7 @@ def convert(
     """
     input_path = Path(input_path)
     reader = DocxReader(str(input_path))
-    ir = SemanticParser(reader).parse()
+    ir = SemanticParser(reader, skip_cover=skip_cover).parse()
 
     # 提取图片
     image_list = []
@@ -74,7 +76,7 @@ def convert(
                     })
 
     emitter = EMITTERS[output_mode]()
-    body = emitter.emit(ir)
+    body = emitter.emit(ir, frontmatter=frontmatter)
 
     stats = {
         "headings": sum(1 for n in ir.nodes if n.type == "heading"),

@@ -1,17 +1,38 @@
 """Emitter — 将 DocumentIR 序列化为 HTML/Markdown/JSON。"""
 
 from .ir import DocumentIR, IRNode, Span, TableCell
+import yaml
+
+
+def _build_frontmatter(ir: DocumentIR) -> str:
+    """生成 YAML frontmatter。"""
+    if not any([ir.title, ir.author, ir.date]):
+        return ""
+    data = {}
+    if ir.title:
+        data["title"] = ir.title
+    if ir.author:
+        data["author"] = ir.author
+    if ir.date:
+        data["date"] = ir.date
+    return "---\n" + yaml.dump(data, allow_unicode=True, default_flow_style=False).strip() + "\n---\n"
 
 
 class HtmlEmitter:
     """输出语义 HTML（默认）。"""
 
-    def emit(self, ir: DocumentIR) -> str:
+    def emit(self, ir: DocumentIR, frontmatter: bool = True) -> str:
         parts = []
+        if frontmatter:
+            fm = _build_frontmatter(ir)
+            if fm:
+                parts.append("<!--\n" + fm.strip("-") + "-->")
         for node in ir.nodes:
             rendered = self._render_node(node)
             if rendered:
                 parts.append(rendered)
+        if ir.footnotes:
+            parts.append(self._render_footnotes(ir))
         return "\n".join(parts)
 
     def _render_node(self, node: IRNode) -> str:
@@ -57,6 +78,8 @@ class HtmlEmitter:
                 text = f"<strong>{text}</strong>"
             if span.italic:
                 text = f"<em>{text}</em>"
+            if span.footnote_id:
+                text = f'<sup><a href="#fn{span.footnote_id}" id="fnref{span.footnote_id}">[{span.footnote_id}]</a></sup>'
             if span.superscript:
                 text = f"<sup>{text}</sup>"
             if span.subscript:
@@ -64,6 +87,16 @@ class HtmlEmitter:
 
             result.append(text)
         return "".join(result)
+
+    def _render_footnotes(self, ir: DocumentIR) -> str:
+        """渲染脚注区。"""
+        lines = ['<hr>', '<div class="footnotes">']
+        for fn in ir.footnotes:
+            lines.append(
+                f'<p id="fn{fn["id"]}"><sup><a href="#fnref{fn["id"]}">[{fn["id"]}]</a></sup> {fn["text"]}</p>'
+            )
+        lines.append("</div>")
+        return "\n".join(lines)
 
     def _render_table(self, rows: list) -> str:
         if not rows:
@@ -88,8 +121,12 @@ class HtmlEmitter:
 class MarkdownEmitter:
     """输出 GFM Markdown。"""
 
-    def emit(self, ir: DocumentIR) -> str:
+    def emit(self, ir: DocumentIR, frontmatter: bool = True) -> str:
         parts = []
+        if frontmatter:
+            fm = _build_frontmatter(ir)
+            if fm:
+                parts.append(fm)
         for node in ir.nodes:
             rendered = self._render_node(node)
             if rendered:
@@ -148,11 +185,13 @@ class MarkdownEmitter:
 class JsonEmitter:
     """输出结构化 JSON IR。"""
 
-    def emit(self, ir: DocumentIR) -> dict:
+    def emit(self, ir: DocumentIR, frontmatter: bool = True) -> dict:
         return {
             "title": ir.title,
             "author": ir.author,
+            "date": ir.date,
             "nodes": [self._render_node(n) for n in ir.nodes],
+            "footnotes": ir.footnotes,
             "stats": self._compute_stats(ir),
         }
 

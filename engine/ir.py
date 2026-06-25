@@ -21,6 +21,7 @@ class Span:
     superscript: bool = False
     subscript: bool = False
     url: Optional[str] = None              # 超链接
+    footnote_id: Optional[str] = None      # 脚注 ID
 
 
 @dataclass
@@ -46,5 +47,7 @@ class DocumentIR:
     """完整文档 IR — 转换管道的核心数据结构。"""
     title: str = ""
     author: str = ""
+    date: str = ""
     nodes: list = field(default_factory=list)  # list[IRNode]
     images: dict = field(default_factory=dict)  # {image_id: filename}
+    footnotes: list = field(default_factory=list)  # list[dict]

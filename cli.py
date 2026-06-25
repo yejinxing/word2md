@@ -14,6 +14,8 @@ def main():
                         choices=["html", "markdown", "json"], help="输出格式 (默认: html)")
     parser.add_argument("--no-images", action="store_true", help="不提取图片")
     parser.add_argument("--images-dir", type=str, default=None, help="图片输出目录")
+    parser.add_argument("--no-skip-cover", action="store_true", help="保留封面页（默认跳过）")
+    parser.add_argument("--no-frontmatter", action="store_true", help="不生成 YAML 元数据头")
     parser.add_argument("--stdout", action="store_true", help="输出到标准输出")
 
     args = parser.parse_args()
@@ -27,6 +29,8 @@ def main():
         output_mode=args.mode,
         extract_images=not args.no_images,
         images_dir=args.images_dir,
+        skip_cover=not args.no_skip_cover,
+        frontmatter=not args.no_frontmatter,
     )
 
     if args.mode == "json":
