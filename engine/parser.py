@@ -2,6 +2,7 @@
 
 from .ir import DocumentIR, IRNode, Span, TableCell
 from .reader import DocxReader
+from .numbering import NumberingResolver
 from xml.etree import ElementTree as ET
 
 
@@ -16,7 +17,12 @@ class SemanticParser:
         self._footnotes_cache: dict | None = None
         self._para_count = 0
         self._cover_ended = not skip_cover
-        self._heading_styles: set = self._load_heading_styles()
+        self._heading_styles: dict = self._load_heading_styles()
+        try:
+            num_xml = reader.zip.read("word/numbering.xml")
+        except KeyError:
+            num_xml = None
+        self.numbering = NumberingResolver(num_xml)
 
     def parse(self) -> DocumentIR:
         """完整解析文档，返回 DocumentIR。"""
@@ -93,16 +99,27 @@ class SemanticParser:
         spans = self._extract_spans(p_elem)
         text = "".join(s.text for s in spans)
 
-        if not text.strip():
+        # 自动编号前缀
+        num_prefix = ""
+        if pPr is not None:
+            numPr = pPr.find(DocxReader.qn("w:numPr"))
+            if numPr is not None:
+                numId = numPr.find(DocxReader.qn("w:numId"))
+                ilvl = numPr.find(DocxReader.qn("w:ilvl"))
+                nid = numId.attrib.get(DocxReader.qn("w:val"), "") if numId is not None else ""
+                lvl = int(ilvl.attrib.get(DocxReader.qn("w:val"), "0")) if ilvl is not None else 0
+                num_prefix = self.numbering.get_prefix(nid, lvl)
+
+        if not text.strip() and not num_prefix:
             return None
 
         if "header" in style.lower() or "footer" in style.lower():
             return None
 
         if is_heading:
-            return IRNode(type="heading", level=level, children=spans)
+            return IRNode(type="heading", level=level, children=spans, attrs={"num_prefix": num_prefix})
 
-        return IRNode(type="paragraph", children=spans)
+        return IRNode(type="paragraph", children=spans, attrs={"num_prefix": num_prefix})
 
     def _load_heading_styles(self) -> dict:
         """从 styles.xml 加载标题样式 ID → 级别映射。"""

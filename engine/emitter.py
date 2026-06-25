@@ -45,10 +45,12 @@ class HtmlEmitter:
     def _render_node(self, node: IRNode) -> str:
         if node.type == "heading":
             level = min(max(node.level, 1), 6)
-            return f"<h{level}>{self._render_spans(node.children)}</h{level}>"
+            prefix = node.attrs.get("num_prefix", "")
+            return f"<h{level}>{prefix}{self._render_spans(node.children)}</h{level}>"
 
         elif node.type == "paragraph":
-            return f"<p>{self._render_spans(node.children)}</p>"
+            prefix = node.attrs.get("num_prefix", "")
+            return f"<p>{prefix}{self._render_spans(node.children)}</p>"
 
         elif node.type == "table":
             return self._render_table(node.children)
@@ -143,10 +145,12 @@ class MarkdownEmitter:
     def _render_node(self, node: IRNode) -> str:
         if node.type == "heading":
             prefix = "#" * min(max(node.level, 1), 6)
-            return f"{prefix} {self._render_spans(node.children)}"
+            num_prefix = node.attrs.get("num_prefix", "")
+            return f"{prefix} {num_prefix}{self._render_spans(node.children)}"
 
         elif node.type == "paragraph":
-            return self._render_spans(node.children)
+            num_prefix = node.attrs.get("num_prefix", "")
+            return f"{num_prefix}{self._render_spans(node.children)}"
 
         elif node.type == "table":
             return self._render_table(node.children)
