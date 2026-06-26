@@ -1,7 +1,9 @@
 # word2md
 
-> Word (.docx) 报告 → HTML / Markdown / JSON 高保真转换工具  
+> Word (.docx / .doc) → HTML / Markdown / JSON 高保真转换工具  
 > 面向 **LLM 消费**优化，支持 CLI / Python API / FastAPI 服务 / Docker 部署
+>
+> ⚠️ **.docx 原生支持（高保真）**，.doc 通过 LibreOffice 转换为 .docx 后再处理，可能有损耗。建议优先使用 .docx。
 
 ---
 
@@ -137,20 +139,58 @@ curl -X POST http://localhost:8088/api/v1/convert/json \
 ## Docker 部署
 
 ```bash
-docker-compose up -d    # 启动在 8088 端口
+docker-compose up -d    # 启动在 8088 端口（镜像约 2.2GB，含 LibreOffice 支持 .doc）
 ```
+
+> Docker 镜像基于 `python:3.11` + LibreOffice，同时支持 `.docx` 和 `.doc`。
+> 仅需 `.docx` 可改用 `python:3.11-slim` 基础镜像（约 200MB）。
 
 ---
 
 ## Dify 集成
 
-在 Dify 工作流中添加 **HTTP 请求** 节点：
+Dify 工作流由两步组成：**HTTP 请求节点** → **代码节点**提取内容。
 
-- **方法**：`POST`
-- **URL**：`http://your-server:8088/api/v1/convert/markdown`
-- **Body 类型**：`form-data`
-- **参数**：`file` = `{{file}}`（上传的 .docx 文件）
-- **输出**：取 `body.data.content` 传给 LLM 节点
+### 步骤 1：HTTP 请求节点
+
+| 配置项 | 值 |
+|--------|-----|
+| 方法 | `POST` |
+| URL | `http://192.168.32.200:8088/api/v1/convert/html` |
+| Body 类型 | `form-data` |
+| 参数 | `file` = `{{file}}` |
+
+三种端点可选：
+
+| 端点 | 适用场景 |
+|------|---------|
+| `/convert/html` | 浏览器渲染、Dify 直接展示 |
+| `/convert/markdown` | LLM 节点消费（token 友好） |
+| `/convert/json` | 程序二次处理 |
+
+### 步骤 2：代码节点（提取 content）
+
+```python
+import json
+
+def main(http_response: str) -> dict:
+    """从 HTTP 节点返回的 JSON 中提取 content 字段。"""
+    try:
+        data = json.loads(http_response)
+        content = data.get("data", {}).get("content")
+        return {"result": content}
+    except (json.JSONDecodeError, AttributeError):
+        return {"result": None}
+```
+
+### 步骤 3：LLM 节点
+
+将代码节点的 `result` 作为输入传入 LLM 节点：
+
+```
+请分析以下招标文件内容：
+{{code_node.result}}
+```
 
 ---
 
