@@ -36,6 +36,10 @@ class SemanticParser:
             if tag == "p":
                 if self._is_toc(element):
                     continue
+                # 跳过"目录"标题（TOC字段指令前的纯文本标题）
+                texts = [t.text.strip() for t in element.findall(f".//{DocxReader.qn('w:t')}") if t.text and t.text.strip()]
+                if ''.join(texts) in ('目录', '目 录'):
+                    continue
                 node = self._parse_paragraph(element)
                 if node:
                     ir.nodes.append(node)
@@ -123,20 +127,13 @@ class SemanticParser:
         return heading_map
 
     def _is_toc(self, p_elem: ET.Element) -> bool:
-        instr_texts = p_elem.findall(f".//{DocxReader.qn('w:instrText')}")
-        has_pageref = False
-        for instr in instr_texts:
-            if instr.text and ("PAGEREF" in instr.text or "HYPERLINK" in instr.text):
-                has_pageref = True
-                break
-        if not has_pageref:
-            return False
-        pPr = p_elem.find(DocxReader.qn("w:pPr"))
-        if pPr is not None:
-            pStyle = pPr.find(DocxReader.qn("w:pStyle"))
-            if pStyle is not None:
-                style = pStyle.attrib.get(DocxReader.qn("w:val"), "")
-                if "toc" in style.lower():
+        """检测段落是否属于目录——TOC字段指令 或 目录条目(PAGEREF/HYPERLINK _Toc)。"""
+        for instr in p_elem.findall(f".//{DocxReader.qn('w:instrText')}"):
+            if instr.text:
+                t = instr.text
+                if "TOC \\" in t:
+                    return True
+                if ("PAGEREF" in t or "HYPERLINK" in t) and "_Toc" in t:
                     return True
         return False
 
