@@ -53,7 +53,7 @@ class HtmlEmitter:
             return f"<p>{prefix}{self._render_spans(node.children)}</p>"
 
         elif node.type == "table":
-            return self._render_table(node.children)
+            return self._render_table(node.children, node.attrs.get("grid_widths"))
 
         elif node.type == "image":
             alt = node.attrs.get("alt", "")
@@ -107,10 +107,19 @@ class HtmlEmitter:
         lines.append("</div>")
         return "\n".join(lines)
 
-    def _render_table(self, rows: list) -> str:
+    def _render_table(self, rows: list, grid_widths: list = None) -> str:
         if not rows:
             return ""
         lines = ["<table>"]
+        # 生成 <colgroup> 按 grid 宽度比例固定列宽
+        if grid_widths:
+            total = sum(grid_widths)
+            if total > 0:
+                col_styles = [f"width:{w/total*100:.1f}%" for w in grid_widths]
+                lines.append("<colgroup>")
+                for cs in col_styles:
+                    lines.append(f'<col style="{cs}">')
+                lines.append("</colgroup>")
         for row in rows:
             cells_html = []
             for cell in row:

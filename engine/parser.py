@@ -241,7 +241,15 @@ class SemanticParser:
         return spans
 
     def _parse_table(self, tbl_elem: ET.Element) -> IRNode | None:
-        """解析表格，含 colspan 处理。"""
+        """解析表格，含 colspan、grid 列宽、单元格自动编号、空列补齐。"""
+        # 读取 tblGrid 列宽
+        tbl_grid = tbl_elem.find(DocxReader.qn("w:tblGrid"))
+        grid_widths = []
+        if tbl_grid is not None:
+            for gc in tbl_grid.findall(DocxReader.qn("w:gridCol")):
+                w = gc.attrib.get(DocxReader.qn("w:w"), "0")
+                grid_widths.append(int(w) if w.isdigit() else 0)
+
         rows = []
         for tr in tbl_elem.findall(DocxReader.qn("w:tr")):
             cells = []
@@ -252,15 +260,37 @@ class SemanticParser:
                     grid_span = tcPr.find(DocxReader.qn("w:gridSpan"))
                     if grid_span is not None:
                         colspan = int(grid_span.attrib.get(DocxReader.qn("w:val"), "1"))
+                # 逐个段落提取 spans，含自动编号
                 paras = tc.findall(DocxReader.qn("w:p"))
                 cell_paragraphs = []
                 for p in paras:
                     spans = self._extract_spans(p)
+                    # 检测单元格段落中的自动编号
+                    pPr = p.find(DocxReader.qn("w:pPr"))
+                    if pPr is not None:
+                        numPr = pPr.find(DocxReader.qn("w:numPr"))
+                        if numPr is not None:
+                            numId = numPr.find(DocxReader.qn("w:numId"))
+                            ilvl = numPr.find(DocxReader.qn("w:ilvl"))
+                            nid = numId.attrib.get(DocxReader.qn("w:val"), "") if numId is not None else ""
+                            lvl = int(ilvl.attrib.get(DocxReader.qn("w:val"), "0")) if ilvl is not None else 0
+                            if nid:
+                                prefix = self.numbering.get_prefix(nid, lvl)
+                                if prefix:
+                                    spans.insert(0, Span(text=prefix))
                     if spans:
                         cell_paragraphs.append(spans)
                 cells.append(TableCell(colspan=colspan, paragraphs=cell_paragraphs))
+            # 对齐到 grid 列数：优先扩展第一格 colspan，保持一致分割线
+            if grid_widths and cells:
+                row_span = sum(c.colspan for c in cells)
+                missing = len(grid_widths) - row_span
+                if missing > 0:
+                    cells[0].colspan += missing
             rows.append(cells)
-        return IRNode(type="table", children=rows)
+
+        return IRNode(type="table", children=rows,
+                      attrs={"grid_widths": grid_widths})
 
     def _detect_image(self, p_elem: ET.Element) -> IRNode | None:
         """检测段落中的图片 (w:drawing → blip 嵌入)。"""

@@ -30,7 +30,7 @@ class IRNode:
     type: str  # "heading" | "paragraph" | "table" | "list" | "image" | "page_break"
     level: int = 0                         # 标题层级 1-6
     children: list = field(default_factory=list)  # list[Span | IRNode]
-    attrs: dict = field(default_factory=dict)     # 附加属性
+    attrs: dict = field(default_factory=dict)     # 附加属性 (含 grid_cols 等)
 
 
 @dataclass
