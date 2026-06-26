@@ -102,11 +102,10 @@ class NumberingResolver:
                     parts.append(_resolve_format(self._level_fmts[pk]["fmt"], pc))
             rendered = ".".join(parts)
 
-        suffix = ""
-        tpl = template.replace(f"%{ilvl + 1}", "").strip()
-        if tpl and tpl[:1] in ".、)）":
-            suffix = tpl[0]
-        elif "." in template:
-            suffix = "."
+        # 从模板提取前后缀（支持中文模板如 第%1章、(一)、%1、）
+        import re
+        parts = re.split(r"%\d+", template, maxsplit=1)
+        prefix = parts[0] if len(parts) > 0 else ""
+        suffix = parts[1] if len(parts) > 1 else ""
 
-        return f"{rendered}{suffix} "
+        return f"{prefix}{rendered}{suffix} "
