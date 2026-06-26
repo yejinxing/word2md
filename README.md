@@ -1,5 +1,12 @@
 # word2md
 
+[![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.138-teal?logo=fastapi)](https://fastapi.tiangolo.com)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)](https://docker.com)
+[![License](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
+[![Tests](https://img.shields.io/badge/Tests-17_passed-brightgreen)]()
+[![LibreOffice](https://img.shields.io/badge/.doc-LibreOffice-orange?logo=libreoffice)](https://libreoffice.org)
+
 > Word (.docx / .doc) → HTML / Markdown / JSON 高保真转换工具  
 > 面向 **LLM 消费**优化，支持 CLI / Python API / FastAPI 服务 / Docker 部署
 >
