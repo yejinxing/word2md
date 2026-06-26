@@ -14,7 +14,6 @@ class SemanticParser:
         self.doc = reader.document_xml
         self.body = self.doc.find(DocxReader.qn("w:body"))
         self.skip_cover = skip_cover
-        self._footnotes_cache: dict | None = None
         self._para_count = 0
         self._cover_ended = not skip_cover
         self._heading_styles: dict = self._load_heading_styles()
@@ -25,21 +24,15 @@ class SemanticParser:
         self.numbering = NumberingResolver(num_xml)
 
     def parse(self) -> DocumentIR:
-        """完整解析文档，返回 DocumentIR。"""
         ir = DocumentIR()
         ir.title = self._extract_title()
         ir.author = self._extract_author()
         ir.date = self._extract_date()
-
         if self.body is None:
             return ir
-
-        # 预解析脚注
         self._parse_footnotes(ir)
-
         for element in self.body:
             tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
-
             if tag == "p":
                 if self._is_toc(element):
                     continue
@@ -50,19 +43,15 @@ class SemanticParser:
                 node = self._parse_table(element)
                 if node:
                     ir.nodes.append(node)
-
         return ir
 
     def _parse_paragraph(self, p_elem: ET.Element) -> IRNode | None:
-        """解析单个段落元素，识别标题/段落/图片。"""
         image = self._detect_image(p_elem)
         if image:
             return image
-
         pPr = p_elem.find(DocxReader.qn("w:pPr"))
         style = ""
         outline_lvl = 0
-
         if pPr is not None:
             pStyle = pPr.find(DocxReader.qn("w:pStyle"))
             if pStyle is not None:
@@ -70,7 +59,6 @@ class SemanticParser:
             outline = pPr.find(DocxReader.qn("w:outlineLvl"))
             if outline is not None:
                 outline_lvl = int(outline.attrib.get(DocxReader.qn("w:val"), "0")) + 1
-
         is_heading = style in self._heading_styles or outline_lvl > 0
         level = 1
         if is_heading:
@@ -79,27 +67,20 @@ class SemanticParser:
             elif style in self._heading_styles:
                 level = self._heading_styles[style]
             level = min(max(level, 1), 6)
-
-        # 封面页跳过：最多跳过前 10 个段落，或遇到分页符时停止
         if not self._cover_ended:
             self._para_count += 1
-            # 检测分页符
             rprs = p_elem.findall(f".//{DocxReader.qn('w:lastRenderedPageBreak')}")
             has_break = len(rprs) > 0
-            pPr = p_elem.find(DocxReader.qn('w:pPr'))
             if pPr is not None:
-                sect = pPr.find(DocxReader.qn('w:sectPr'))
+                sect = pPr.find(DocxReader.qn("w:sectPr"))
                 if sect is not None:
                     has_break = True
             if has_break or self._para_count > 10 or is_heading:
                 self._cover_ended = True
             else:
                 return None
-
         spans = self._extract_spans(p_elem)
         text = "".join(s.text for s in spans)
-
-        # 自动编号前缀
         num_prefix = ""
         if pPr is not None:
             numPr = pPr.find(DocxReader.qn("w:numPr"))
@@ -109,20 +90,15 @@ class SemanticParser:
                 nid = numId.attrib.get(DocxReader.qn("w:val"), "") if numId is not None else ""
                 lvl = int(ilvl.attrib.get(DocxReader.qn("w:val"), "0")) if ilvl is not None else 0
                 num_prefix = self.numbering.get_prefix(nid, lvl)
-
         if not text.strip() and not num_prefix:
             return None
-
         if "header" in style.lower() or "footer" in style.lower():
             return None
-
         if is_heading:
             return IRNode(type="heading", level=level, children=spans, attrs={"num_prefix": num_prefix})
-
         return IRNode(type="paragraph", children=spans, attrs={"num_prefix": num_prefix})
 
     def _load_heading_styles(self) -> dict:
-        """从 styles.xml 加载标题样式 ID → 级别映射。"""
         heading_map = {
             "Heading1": 1, "Heading2": 2, "Heading3": 3,
             "Heading4": 4, "Heading5": 5, "Heading6": 6,
@@ -147,7 +123,6 @@ class SemanticParser:
         return heading_map
 
     def _is_toc(self, p_elem: ET.Element) -> bool:
-        """检测段落是否为目录(TOC)内容。仅当同时满足 TOC 样式 + PAGEREF/HYPERLINK 时才跳过。"""
         instr_texts = p_elem.findall(f".//{DocxReader.qn('w:instrText')}")
         has_pageref = False
         for instr in instr_texts:
@@ -156,7 +131,6 @@ class SemanticParser:
                 break
         if not has_pageref:
             return False
-        # 同时检查 TOC 样式
         pPr = p_elem.find(DocxReader.qn("w:pPr"))
         if pPr is not None:
             pStyle = pPr.find(DocxReader.qn("w:pStyle"))
@@ -167,42 +141,33 @@ class SemanticParser:
         return False
 
     def _extract_spans(self, p_elem: ET.Element) -> list[Span]:
-        """提取段落中所有 run 的 inline 格式，含域代码和脚注引用。"""
         spans = []
         in_field = False
-        field_text = ""
-
         for r_elem in p_elem.findall(DocxReader.qn("w:r")):
             rPr = r_elem.find(DocxReader.qn("w:rPr"))
             bold = italic = underline = False
             highlight = color = None
             footnote_id = None
-
-            # 检测域代码
             fld_char = r_elem.find(DocxReader.qn("w:fldChar"))
             instr_text = r_elem.find(DocxReader.qn("w:instrText"))
-
             if fld_char is not None:
                 fld_type = fld_char.attrib.get(DocxReader.qn("w:fldCharType"), "")
                 if fld_type == "begin":
                     in_field = True
-                    field_text = ""
+                    continue
+                elif fld_type == "separate":
+                    in_field = False  # separate 之后是字段结果，应保留
                     continue
                 elif fld_type == "end":
                     in_field = False
-                    field_text = ""
                     continue
             if instr_text is not None and instr_text.text:
-                field_text = instr_text.text
                 continue
             if in_field:
-                continue  # 跳过域代码之间的内容
-
-            # 检测脚注引用
+                continue
             footnote_ref = r_elem.find(DocxReader.qn("w:footnoteReference"))
             if footnote_ref is not None:
                 footnote_id = footnote_ref.attrib.get(DocxReader.qn("w:id"), "")
-
             if rPr is not None:
                 bold = rPr.find(DocxReader.qn("w:b")) is not None
                 italic = rPr.find(DocxReader.qn("w:i")) is not None
@@ -213,11 +178,8 @@ class SemanticParser:
                 clr = rPr.find(DocxReader.qn("w:color"))
                 if clr is not None:
                     color = clr.attrib.get(DocxReader.qn("w:val"), None)
-
             t_elem = r_elem.find(DocxReader.qn("w:t"))
             text = t_elem.text if t_elem is not None and t_elem.text else ""
-
-            # 检测 Wingdings 勾选框符号
             sym_elem = r_elem.find(DocxReader.qn("w:sym"))
             if sym_elem is not None:
                 char_code = sym_elem.attrib.get(DocxReader.qn("w:char"), "")
@@ -227,22 +189,13 @@ class SemanticParser:
                         text = "☐"
                     elif char_code in ("00FE", "00FC"):
                         text = "☑"
-
             if text or highlight or color or footnote_id:
-                spans.append(Span(
-                    text=text,
-                    bold=bold,
-                    italic=italic,
-                    underline=underline,
-                    highlight=highlight,
-                    color=color,
-                    footnote_id=footnote_id,
-                ))
+                spans.append(Span(text=text, bold=bold, italic=italic, underline=underline,
+                                  highlight=highlight, color=color, footnote_id=footnote_id))
         return spans
 
     def _parse_table(self, tbl_elem: ET.Element) -> IRNode | None:
-        """解析表格，含 colspan、grid 列宽、单元格自动编号、空列补齐。"""
-        # 读取 tblGrid 列宽
+        """解析表格，含 colspan/rowspan(vMerge)、grid 列宽、自动编号。"""
         tbl_grid = tbl_elem.find(DocxReader.qn("w:tblGrid"))
         grid_widths = []
         if tbl_grid is not None:
@@ -250,23 +203,30 @@ class SemanticParser:
                 w = gc.attrib.get(DocxReader.qn("w:w"), "0")
                 grid_widths.append(int(w) if w.isdigit() else 0)
 
-        rows = []
+        # 第一遍：收集 raw 信息 + vMerge 状态 + grid 列位置
+        raw_rows = []
         for tr in tbl_elem.findall(DocxReader.qn("w:tr")):
-            cells = []
+            raw_cells = []
+            grid_pos = 0
             for tc in tr.findall(DocxReader.qn("w:tc")):
                 tcPr = tc.find(DocxReader.qn("w:tcPr"))
                 colspan = 1
+                vmerge = None
                 if tcPr is not None:
-                    grid_span = tcPr.find(DocxReader.qn("w:gridSpan"))
-                    if grid_span is not None:
-                        colspan = int(grid_span.attrib.get(DocxReader.qn("w:val"), "1"))
-                # 逐个段落提取 spans，含自动编号
+                    gs = tcPr.find(DocxReader.qn("w:gridSpan"))
+                    if gs is not None:
+                        colspan = int(gs.attrib.get(DocxReader.qn("w:val"), "1"))
+                    vm = tcPr.find(DocxReader.qn("w:vMerge"))
+                    if vm is not None:
+                        val = vm.attrib.get(DocxReader.qn("w:val"), "")
+                        vmerge = val if val else "continue"  # 无 val 属性 = continue
                 paras = tc.findall(DocxReader.qn("w:p"))
                 cell_paragraphs = []
                 for p in paras:
                     spans = self._extract_spans(p)
-                    # 检测单元格段落中的自动编号
-                    pPr = p.find(DocxReader.qn("w:pPr"))
+                    # vMerge continue 格不处理编号（复用 restart 格的编号）
+                    if vmerge != "continue":
+                        pPr = p.find(DocxReader.qn("w:pPr"))
                     if pPr is not None:
                         numPr = pPr.find(DocxReader.qn("w:numPr"))
                         if numPr is not None:
@@ -280,23 +240,59 @@ class SemanticParser:
                                     spans.insert(0, Span(text=prefix))
                     if spans:
                         cell_paragraphs.append(spans)
-                cells.append(TableCell(colspan=colspan, paragraphs=cell_paragraphs))
-            # 对齐到 grid 列数：优先扩展第一格 colspan，保持一致分割线
-            if grid_widths and cells:
+                raw_cells.append(dict(colspan=colspan, vmerge=vmerge,
+                                      grid_pos=grid_pos, paragraphs=cell_paragraphs))
+                grid_pos += colspan
+            raw_rows.append(raw_cells)
+
+        # 第二遍：vMerge → rowspan，标记 skip。支持同列多链。
+        vm_tracker = {}
+        for raw_cells in raw_rows:
+            for cell in raw_cells:
+                gp = cell["grid_pos"]
+                if cell["vmerge"] == "restart":
+                    # 先关闭同一 grid 位置上已有的链
+                    if gp in vm_tracker:
+                        vm_tracker[gp]["src"]["rowspan"] = vm_tracker[gp]["count"]
+                    vm_tracker[gp] = {"count": 1, "src": cell}
+                elif cell["vmerge"] == "continue":
+                    if gp in vm_tracker:
+                        vm_tracker[gp]["count"] += 1
+                    cell["_skip"] = True
+                else:
+                    if gp in vm_tracker:
+                        vm_tracker[gp]["src"]["rowspan"] = vm_tracker[gp]["count"]
+                        del vm_tracker[gp]
+        for gp, t in vm_tracker.items():
+            t["src"]["rowspan"] = t["count"]
+
+        # 第三遍：构建 TableCell，跳过 vMerge continue 格
+        rows = []
+        for raw_cells in raw_rows:
+            cells = []
+            has_vmerge = False
+            for cell in raw_cells:
+                if cell.get("_skip"):
+                    has_vmerge = True
+                    continue
+                if cell.get("rowspan", 1) > 1:
+                    has_vmerge = True
+                cells.append(TableCell(
+                    colspan=cell["colspan"],
+                    rowspan=cell.get("rowspan", 1),
+                    paragraphs=cell["paragraphs"],
+                ))
+            # 对齐：仅当没有 vMerge 时才扩展 colspan
+            if grid_widths and cells and not has_vmerge:
                 row_span = sum(c.colspan for c in cells)
                 missing = len(grid_widths) - row_span
                 if missing > 0:
                     cells[0].colspan += missing
             rows.append(cells)
 
-        return IRNode(type="table", children=rows,
-                      attrs={"grid_widths": grid_widths})
+        return IRNode(type="table", children=rows, attrs={"grid_widths": grid_widths})
 
     def _detect_image(self, p_elem: ET.Element) -> IRNode | None:
-        """检测段落中的图片 (w:drawing → blip 嵌入)。"""
-        drawing = p_elem.find(DocxReader.qn("w:r"))
-        if drawing is None:
-            return None
         blips = p_elem.findall(f".//{DocxReader.qn('a:blip')}")
         if not blips:
             return None
@@ -305,20 +301,15 @@ class SemanticParser:
         if not embed:
             return None
         ext = self.reader.get_image_ext(embed)
-        return IRNode(
-            type="image",
-            attrs={"rId": embed, "ext": ext, "filename": f"image_{embed}{ext}"},
-        )
+        return IRNode(type="image", attrs={"rId": embed, "ext": ext, "filename": f"image_{embed}{ext}"})
 
     def _parse_footnotes(self, ir: DocumentIR):
-        """解析脚注/尾注。"""
         try:
             fns_xml = self.reader.zip.read("word/footnotes.xml")
         except KeyError:
             return
         root = ET.fromstring(fns_xml)
-        ns = DocxReader.qn("w:footnote")
-        for fn in root.findall(ns):
+        for fn in root.findall(DocxReader.qn("w:footnote")):
             fn_id = fn.attrib.get(DocxReader.qn("w:id"), "")
             if fn_id in ("0", "-1"):
                 continue
@@ -327,10 +318,7 @@ class SemanticParser:
                 for t in p.findall(f".//{DocxReader.qn('w:t')}"):
                     if t.text:
                         text_parts.append(t.text)
-            ir.footnotes.append({
-                "id": fn_id,
-                "text": "".join(text_parts),
-            })
+            ir.footnotes.append({"id": fn_id, "text": "".join(text_parts)})
 
     def _extract_title(self) -> str:
         try:
@@ -353,7 +341,6 @@ class SemanticParser:
             return ""
 
     def _extract_date(self) -> str:
-        """提取文档日期。"""
         try:
             core = self.reader.zip.read("docProps/core.xml")
             root = ET.fromstring(core)
