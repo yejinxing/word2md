@@ -1,5 +1,7 @@
-"""Engine — Word (.docx) → HTML/Markdown/JSON 转换管道。"""
+"""Engine — Word (.docx) → HTML/Markdown/JSON 转换管道。支持 .doc 自动转换。"""
 
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +46,29 @@ def convert(
         }
     """
     input_path = Path(input_path)
+
+    # .doc → .docx 自动转换（需要 LibreOffice）
+    if input_path.suffix.lower() == ".doc":
+        try:
+            tmp_dir = tempfile.mkdtemp()
+            subprocess.run(
+                ["soffice", "--headless", "--convert-to", "docx",
+                 "--outdir", tmp_dir, str(input_path)],
+                check=True, capture_output=True, timeout=60,
+            )
+            converted = list(Path(tmp_dir).glob("*.docx"))
+            if converted:
+                input_path = converted[0]
+            else:
+                raise RuntimeError("LibreOffice .doc→.docx 转换失败")
+        except FileNotFoundError:
+            raise RuntimeError(
+                ".doc 文件需要 LibreOffice 转换。请安装 LibreOffice 或使用 .docx 格式。\n"
+                "下载: https://www.libreoffice.org/"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("LibreOffice 转换超时（60秒）")
+
     reader = DocxReader(str(input_path))
     ir = SemanticParser(reader, skip_cover=skip_cover).parse()
 
