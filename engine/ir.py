@@ -35,11 +35,10 @@ class IRNode:
 
 @dataclass
 class TableCell:
-    """表格单元格"""
-    text: str
+    """表格单元格 — 每个段落存储 spans 列表以保留格式。"""
     rowspan: int = 1
     colspan: int = 1
-    spans: list = field(default_factory=list)  # list[Span]
+    paragraphs: list = field(default_factory=list)  # list[list[Span]]
 
 
 @dataclass

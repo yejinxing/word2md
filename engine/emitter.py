@@ -121,7 +121,13 @@ class HtmlEmitter:
                     attrs += f' colspan="{cell.colspan}"'
                 if cell.rowspan > 1:
                     attrs += f' rowspan="{cell.rowspan}"'
-                cell_text = cell.text if cell.text else "&nbsp;"
+                # 渲染每个段落的格式 spans，段落间用 <br> 分隔
+                para_htmls = []
+                for para_spans in cell.paragraphs:
+                    para_spans_filtered = [s for s in para_spans if isinstance(s, Span)]
+                    if para_spans_filtered:
+                        para_htmls.append(self._render_spans(para_spans_filtered))
+                cell_text = "<br>".join(para_htmls) if para_htmls else "&nbsp;"
                 cells_html.append(f"<td{attrs}>{cell_text}</td>")
             lines.append(f"<tr>{''.join(cells_html)}</tr>")
         lines.append("</table>")
@@ -186,8 +192,16 @@ class MarkdownEmitter:
             return ""
         lines = []
         for i, row in enumerate(rows):
-            cells = [c.text.replace("|", "\\|") if isinstance(c, TableCell) else ""
-                     for c in row]
+            cells = []
+            for c in row:
+                if isinstance(c, TableCell):
+                    parts = []
+                    for para_spans in c.paragraphs:
+                        parts.append(self._render_spans(para_spans))
+                    cell_text = "<br>".join(parts).replace("|", "\\|") if parts else ""
+                else:
+                    cell_text = ""
+                cells.append(cell_text)
             lines.append("| " + " | ".join(cells) + " |")
             if i == 0:
                 lines.append("| " + " | ".join("---" for _ in cells) + " |")
@@ -213,7 +227,8 @@ class JsonEmitter:
             obj["level"] = node.level
         if node.type == "table" and node.children:
             obj["rows"] = [
-                [{"text": c.text, "colspan": c.colspan} for c in row if isinstance(c, TableCell)]
+                [{"paragraphs": [[self._render_span(s) for s in p] for p in c.paragraphs],
+                  "colspan": c.colspan} for c in row if isinstance(c, TableCell)]
                 for row in node.children
             ]
         else:

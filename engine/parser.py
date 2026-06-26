@@ -253,11 +253,12 @@ class SemanticParser:
                     if grid_span is not None:
                         colspan = int(grid_span.attrib.get(DocxReader.qn("w:val"), "1"))
                 paras = tc.findall(DocxReader.qn("w:p"))
-                cell_text = ""
+                cell_paragraphs = []
                 for p in paras:
                     spans = self._extract_spans(p)
-                    cell_text += "".join(s.text for s in spans) + "\n"
-                cells.append(TableCell(text=cell_text.strip(), colspan=colspan))
+                    if spans:
+                        cell_paragraphs.append(spans)
+                cells.append(TableCell(colspan=colspan, paragraphs=cell_paragraphs))
             rows.append(cells)
         return IRNode(type="table", children=rows)
 
