@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--no-images", action="store_true", help="不提取图片")
     parser.add_argument("--images-dir", type=str, default=None, help="图片输出目录")
     parser.add_argument("--skip-cover", action="store_true", help="跳过封面页（默认保留）")
-    parser.add_argument("--no-frontmatter", action="store_true", help="不生成 YAML 元数据头")
+    parser.add_argument("--frontmatter", action="store_true", help="生成 YAML 元数据头（默认关闭）")
     parser.add_argument("--stdout", action="store_true", help="输出到标准输出")
 
     args = parser.parse_args()
@@ -30,7 +30,7 @@ def main():
         extract_images=not args.no_images,
         images_dir=args.images_dir,
         skip_cover=args.skip_cover,
-        frontmatter=not args.no_frontmatter,
+        frontmatter=args.frontmatter,
     )
 
     if args.mode == "json":
