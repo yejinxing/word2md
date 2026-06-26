@@ -123,6 +123,7 @@ class HtmlEmitter:
                     attrs += f' rowspan="{cell.rowspan}"'
                 cell_text = cell.text if cell.text else "&nbsp;"
                 cells_html.append(f"<td{attrs}>{cell_text}</td>")
+            lines.append(f"<tr>{''.join(cells_html)}</tr>")
         lines.append("</table>")
         return "\n".join(lines)
 
