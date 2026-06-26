@@ -217,6 +217,17 @@ class SemanticParser:
             t_elem = r_elem.find(DocxReader.qn("w:t"))
             text = t_elem.text if t_elem is not None and t_elem.text else ""
 
+            # 检测 Wingdings 勾选框符号
+            sym_elem = r_elem.find(DocxReader.qn("w:sym"))
+            if sym_elem is not None:
+                char_code = sym_elem.attrib.get(DocxReader.qn("w:char"), "")
+                font = sym_elem.attrib.get(DocxReader.qn("w:font"), "").lower()
+                if "wingdings" in font:
+                    if char_code in ("00A8", "00A3", "0075"):
+                        text = "☐"
+                    elif char_code in ("00FE", "00FC"):
+                        text = "☑"
+
             if text or highlight or color or footnote_id:
                 spans.append(Span(
                     text=text,
